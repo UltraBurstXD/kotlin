@@ -32,11 +32,11 @@ import org.jetbrains.kotlin.descriptors.FunctionDescriptor
 import org.jetbrains.kotlin.descriptors.ModuleDescriptor
 import org.jetbrains.kotlin.extensions.AnnotationBasedExtension
 import org.jetbrains.kotlin.extensions.StorageComponentContainerContributor
-import org.jetbrains.kotlin.resolve.sam.SamWithReceiverResolver
 import org.jetbrains.kotlin.platform.TargetPlatform
 import org.jetbrains.kotlin.platform.jvm.isJvm
 import org.jetbrains.kotlin.psi.KtFile
 import org.jetbrains.kotlin.psi.KtModifierListOwner
+import org.jetbrains.kotlin.resolve.sam.SamWithReceiverResolver
 import org.jetbrains.kotlin.scripting.compiler.plugin.ScriptingCompilerConfigurationComponentRegistrar
 import org.jetbrains.kotlin.scripting.compiler.plugin.dependencies.ScriptsCompilationDependencies
 import org.jetbrains.kotlin.scripting.compiler.plugin.dependencies.collectScriptsCompilationDependencies
@@ -164,28 +164,39 @@ private fun CompilerConfiguration.updateWithCompilerOptions(
     ignoredOptionsReportingState: IgnoredOptionsReportingState,
     isRefinement: Boolean
 ) {
+    updateWithCompilerOptions(compilerOptions) {
+        validateArguments(it.errors)?.let { error ->
+            messageCollector.report(CompilerMessageSeverity.ERROR, error)
+            false
+        } ?: run {
+            messageCollector.reportArgumentParseProblems(it)
+            reportArgumentsIgnoredGenerally(
+                it,
+                messageCollector,
+                ignoredOptionsReportingState
+            )
+            if (isRefinement) {
+                reportArgumentsIgnoredFromRefinement(
+                    it,
+                    messageCollector,
+                    ignoredOptionsReportingState
+                )
+            }
+            true
+        }
+    }
+}
+
+internal fun CompilerConfiguration.updateWithCompilerOptions(
+    compilerOptions: List<String>,
+    validate: (K2JVMCompilerArguments) -> Boolean = {
+        validateArguments(it.errors)?.let { throw Exception("Error parsing arguments: $it") } ?: true
+    }
+) {
     val compilerArguments = K2JVMCompilerArguments()
     parseCommandLineArguments(compilerOptions, compilerArguments)
 
-    validateArguments(compilerArguments.errors)?.let {
-        messageCollector.report(CompilerMessageSeverity.ERROR, it)
-        return
-    }
-
-    messageCollector.reportArgumentParseProblems(compilerArguments)
-
-    reportArgumentsIgnoredGenerally(
-        compilerArguments,
-        messageCollector,
-        ignoredOptionsReportingState
-    )
-    if (isRefinement) {
-        reportArgumentsIgnoredFromRefinement(
-            compilerArguments,
-            messageCollector,
-            ignoredOptionsReportingState
-        )
-    }
+    if (!validate(compilerArguments)) return
 
     processPluginsCommandLine(compilerArguments)
 
