@@ -7,7 +7,7 @@ abstract class IncrementalCompilerRunner<T>(
     val fail: Boolean,
     val output: Collection<String> = emptyList()
 ) {
-    fun res(res: T? = null) = res ?: (if (fail) "FAIL" else workingDir)
+    fun res(res: T? = null): String = (res as? String) ?: (if (fail) "FAIL" else workingDir)
 }
 
 class IncrementalJsCompilerRunner(
