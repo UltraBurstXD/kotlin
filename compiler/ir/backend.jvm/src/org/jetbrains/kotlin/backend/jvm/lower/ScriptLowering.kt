@@ -78,6 +78,7 @@ private class ScriptsToClassesLowering(val context: JvmBackendContext) {
         }.also { irScriptClass ->
             irScriptClass.superTypes += context.irBuiltIns.anyType
             irScriptClass.parent = irFile
+            irScriptClass.metadata = irScript.metadata
         }
     }
 
@@ -160,7 +161,6 @@ private class ScriptsToClassesLowering(val context: JvmBackendContext) {
         }
 
         irScriptClass.annotations += (irScriptClass.parent as IrFile).annotations
-        irScriptClass.metadata = (irScriptClass.parent as IrFile).metadata
 
         irScript.resultProperty?.owner?.let { irResultProperty ->
             context.state.scriptSpecific.resultFieldName = irResultProperty.name.identifier

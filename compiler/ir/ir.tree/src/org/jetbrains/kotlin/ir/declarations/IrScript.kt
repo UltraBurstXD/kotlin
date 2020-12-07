@@ -14,7 +14,7 @@ import org.jetbrains.kotlin.ir.types.IrType
 //NOTE: declarations and statements stored separately
 abstract class IrScript :
     IrDeclarationBase(), IrSymbolDeclaration<IrScriptSymbol>, IrDeclarationWithName,
-    IrDeclarationParent, IrStatementContainer {
+    IrDeclarationParent, IrStatementContainer, IrMetadataSourceOwner {
 
     // NOTE: is the result of the FE conversion, because there script interpreted as a class and has receiver
     // TODO: consider removing from here and handle appropriately in the lowering
