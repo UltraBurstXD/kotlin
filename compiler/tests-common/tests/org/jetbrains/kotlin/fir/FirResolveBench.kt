@@ -240,15 +240,17 @@ class FirResolveBench(val withProgress: Boolean) {
             firFiles.forEach {
                 it.accept(object : FirDefaultVisitorVoid() {
 
-                    fun reportProblem(problem: String, psi: PsiElement) {
+                    fun reportProblem(problem: String, psi: PsiElement?) {
+                        val containingFile = psi?.containingFile ?: it.psi?.containingFile ?: return
                         val document = try {
-                            fileDocumentManager.getDocument(psi.containingFile.virtualFile)
+                            fileDocumentManager.getDocument(containingFile.virtualFile)
                         } catch (t: Throwable) {
-                            throw Exception("for file ${psi.containingFile}", t)
+                            throw Exception("for file $containingFile", t)
                         }
-                        val line = (document?.getLineNumber(psi.startOffset) ?: 0)
-                        val char = psi.startOffset - (document?.getLineStartOffset(line) ?: 0)
-                        val report = "e: ${psi.containingFile?.virtualFile?.path}: (${line + 1}:$char): $problem"
+                        val startOffset = psi?.startOffset ?: 0
+                        val line = (document?.getLineNumber(startOffset) ?: 0)
+                        val char = startOffset - (document?.getLineStartOffset(line) ?: 0)
+                        val report = "e: ${containingFile.virtualFile?.path}: (${line + 1}:$char): $problem"
                         errorTypesReports.getOrPut(problem) { ErrorTypeReport(report) }.count++
                     }
 
@@ -315,7 +317,7 @@ class FirResolveBench(val withProgress: Boolean) {
 //                            if (resolvedTypeRef is FirErrorTypeRef && resolvedTypeRef.diagnostic is ConeStubDiagnostic) {
 //                                return
 //                            }
-                            val psi = resolvedTypeRef.psi ?: return
+                            val psi = resolvedTypeRef.psi
                             val problem = "${resolvedTypeRef::class.simpleName} -> ${type::class.simpleName}: ${type.render()}"
                             reportProblem(problem, psi)
                         }
