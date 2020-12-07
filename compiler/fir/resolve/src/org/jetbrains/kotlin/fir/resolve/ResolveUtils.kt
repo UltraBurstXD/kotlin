@@ -34,6 +34,7 @@ import org.jetbrains.kotlin.fir.types.impl.ConeClassLikeTypeImpl
 import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
+import org.jetbrains.kotlin.utils.addToStdlib.safeAs
 
 fun List<FirQualifierPart>.toTypeProjections(): Array<ConeTypeProjection> =
     asReversed().flatMap { it.typeArgumentList.typeArguments.map { typeArgument -> typeArgument.toConeTypeProjection() } }.toTypedArray()
@@ -316,14 +317,8 @@ private fun FirQualifiedAccess.expressionTypeOrUnitForAssignment(): ConeKotlinTy
 }
 
 fun FirAnnotationCall.getCorrespondingClassSymbolOrNull(session: FirSession): FirRegularClassSymbol? {
-    return annotationTypeRef.coneType.fullyExpandedType(session).classId?.let {
-        if (it.isLocal) {
-            // TODO: How to retrieve local annotaiton's constructor?
-            null
-        } else {
-            (session.firSymbolProvider.getClassLikeSymbolByFqName(it) as? FirRegularClassSymbol)
-        }
-    }
+    return annotationTypeRef.coneType.fullyExpandedType(session).safeAs<ConeClassLikeType>()
+        ?.lookupTag?.toSymbol(session) as? FirRegularClassSymbol
 }
 
 fun <T> BodyResolveComponents.initialTypeOfCandidate(
