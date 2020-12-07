@@ -13,22 +13,20 @@ import org.jetbrains.kotlin.ir.UNDEFINED_OFFSET
 import org.jetbrains.kotlin.ir.builders.*
 import org.jetbrains.kotlin.ir.declarations.*
 import org.jetbrains.kotlin.ir.declarations.impl.IrVariableImpl
-import org.jetbrains.kotlin.ir.descriptors.WrappedVariableDescriptor
 import org.jetbrains.kotlin.ir.expressions.IrExpression
 import org.jetbrains.kotlin.ir.expressions.IrMemberAccessExpression
 import org.jetbrains.kotlin.ir.expressions.impl.IrGetValueImpl
 import org.jetbrains.kotlin.ir.expressions.mapTypeParameters
 import org.jetbrains.kotlin.ir.expressions.mapValueParameters
+import org.jetbrains.kotlin.ir.symbols.IrClassifierSymbol
 import org.jetbrains.kotlin.ir.symbols.IrConstructorSymbol
 import org.jetbrains.kotlin.ir.symbols.IrSimpleFunctionSymbol
 import org.jetbrains.kotlin.ir.symbols.impl.IrVariableSymbolImpl
 import org.jetbrains.kotlin.ir.types.IrType
+import org.jetbrains.kotlin.ir.types.classifierOrNull
+import org.jetbrains.kotlin.ir.types.isNullable
 import org.jetbrains.kotlin.name.Name
-import org.jetbrains.kotlin.resolve.scopes.MemberScope
-import org.jetbrains.kotlin.types.KotlinType
 import org.jetbrains.kotlin.types.checker.KotlinTypeChecker
-import org.jetbrains.kotlin.types.isNullable
-import org.jetbrains.kotlin.types.typeUtil.representativeUpperBound
 
 /**
  * A platform-, frontend-independent logic for generating synthetic members of data class: equals, hashCode, toString, componentN, and copy.
@@ -111,7 +109,7 @@ abstract class DataClassMembersGenerator(
             )
         }
 
-        fun generateEqualsMethodBody(properties: List<PropertyDescriptor>) {
+        fun generateEqualsMethodBody(properties: List<IrProperty>) {
             val irType = irClass.defaultType
 
             if (!irClass.isInline) {
@@ -120,7 +118,7 @@ abstract class DataClassMembersGenerator(
             +irIfThenReturnFalse(irNotIs(irOther(), irType))
             val otherWithCast = irTemporary(irAs(irOther(), irType), "other_with_cast")
             for (property in properties) {
-                val field = getBackingField(property)
+                val field = property.backingField!!
                 val arg1 = irGetField(irThis(), field)
                 val arg2 = irGetField(irGet(irType, otherWithCast.symbol), field)
                 +irIfThenReturnFalse(irNotEquals(arg1, arg2))
@@ -141,7 +139,7 @@ abstract class DataClassMembersGenerator(
                 KotlinTypeChecker.DEFAULT.equalTypes(it.valueParameters[0].type, intType)
             }.let { symbolTable.referenceSimpleFunction(it) }
 
-        fun generateHashCodeMethodBody(properties: List<PropertyDescriptor>) {
+        fun generateHashCodeMethodBody(properties: List<IrProperty>) {
             if (properties.isEmpty()) {
                 +irReturn(irInt(0))
                 return
@@ -173,10 +171,10 @@ abstract class DataClassMembersGenerator(
             +irReturn(irGet(irResultVar))
         }
 
-        private fun getHashCodeOfProperty(property: PropertyDescriptor): IrExpression {
-            val field = getBackingField(property)
+        private fun getHashCodeOfProperty(property: IrProperty): IrExpression {
+            val field = property.backingField!!
             return when {
-                property.type.isNullable() ->
+                property.backingField!!.type.isNullable() ->
                     irIfNull(
                         context.irBuiltIns.intType,
                         irGetField(irThis(), field),
@@ -188,12 +186,9 @@ abstract class DataClassMembersGenerator(
             }
         }
 
-        private fun getHashCodeOf(property: PropertyDescriptor, irValue: IrExpression): IrExpression {
-            var substituted: FunctionDescriptor? = null
-            val hashCodeFunctionSymbol = getHashCodeFunction(property) {
-                substituted = it
-                symbolTable.referenceSimpleFunction(it.original)
-            }
+        private fun getHashCodeOf(property: IrProperty, irValue: IrExpression): IrExpression {
+            val hashCodeFunctionInfo = getHashCodeFunctionInfo(property.backingField!!.type)
+            val hashCodeFunctionSymbol = hashCodeFunctionInfo.symbol
 
             val hasDispatchReceiver = hashCodeFunctionSymbol.descriptor.dispatchReceiverParameter != null
             return irCall(
@@ -207,26 +202,24 @@ abstract class DataClassMembersGenerator(
                 } else {
                     putValueArgument(0, irValue)
                 }
-                commitSubstituted(this, substituted ?: hashCodeFunctionSymbol.descriptor)
+                hashCodeFunctionInfo.commitSubstituted(this)
             }
         }
 
-        fun generateToStringMethodBody(properties: List<PropertyDescriptor>) {
+        fun generateToStringMethodBody(properties: List<IrProperty>) {
             val irConcat = irConcat()
-            irConcat.addArgument(irString(irClass.descriptor.name.asString() + "("))
+            irConcat.addArgument(irString(irClass.name.asString() + "("))
             var first = true
             for (property in properties) {
                 if (!first) irConcat.addArgument(irString(", "))
 
                 irConcat.addArgument(irString(property.name.asString() + "="))
 
-                val irPropertyValue = irGetField(irThis(), getBackingField(property))
+                val irPropertyValue = irGetField(irThis(), property.backingField!!)
 
-                val typeConstructorDescriptor = property.type.constructor.declarationDescriptor
+                val classifier = property.backingField!!.type.classifierOrNull
                 val irPropertyStringValue =
-                    if (typeConstructorDescriptor is ClassDescriptor &&
-                        KotlinBuiltIns.isArrayOrPrimitiveArray(typeConstructorDescriptor)
-                    )
+                    if (classifier.isArrayOrPrimitiveArray)
                         irCall(context.irBuiltIns.dataClassArrayMemberToStringSymbol, context.irBuiltIns.stringType).apply {
                             putValueArgument(0, irPropertyValue)
                         }
@@ -241,8 +234,14 @@ abstract class DataClassMembersGenerator(
         }
     }
 
+    fun getIrProperty(property: PropertyDescriptor): IrProperty =
+        irClass.properties.single { it.descriptor == property }
+
     fun getBackingField(property: PropertyDescriptor): IrField =
-        irClass.properties.single { it.descriptor == property }.backingField!!
+        getIrProperty(property).backingField!!
+
+    val IrClassifierSymbol?.isArrayOrPrimitiveArray: Boolean
+        get() = this == context.irBuiltIns.arrayClass || this in context.irBuiltIns.primitiveArrays
 
     abstract fun declareSimpleFunction(startOffset: Int, endOffset: Int, functionDescriptor: FunctionDescriptor): IrFunction
 
@@ -319,60 +318,33 @@ abstract class DataClassMembersGenerator(
     // Entry for psi2ir
     fun generateEqualsMethod(function: FunctionDescriptor, properties: List<PropertyDescriptor>) {
         buildMember(function) {
-            generateEqualsMethodBody(properties)
+            generateEqualsMethodBody(properties.map { getIrProperty(it) })
         }
     }
 
     // Entry for fir2ir
-    fun generateEqualsMethod(irFunction: IrFunction, properties: List<PropertyDescriptor>) {
+    fun generateEqualsMethod(irFunction: IrFunction, properties: List<IrProperty>) {
         buildMember(irFunction) {
             generateEqualsMethodBody(properties)
         }
     }
 
-    private fun MemberScope.findHashCodeFunctionOrNull() =
-        getContributedFunctions(Name.identifier("hashCode"), NoLookupLocation.FROM_BACKEND)
-            .find { it.valueParameters.isEmpty() }
+    interface HashCodeFunctionInfo {
+        val symbol: IrSimpleFunctionSymbol
+        fun commitSubstituted(irMemberAccessExpression: IrMemberAccessExpression<*>)
+    }
 
-    private fun getHashCodeFunction(type: KotlinType): FunctionDescriptor =
-        type.memberScope.findHashCodeFunctionOrNull()
-            ?: context.builtIns.any.unsubstitutedMemberScope.findHashCodeFunctionOrNull()!!
-
-    private fun getHashCodeFunction(
-        type: KotlinType,
-        symbolResolve: (FunctionDescriptor) -> IrSimpleFunctionSymbol
-    ): IrSimpleFunctionSymbol =
-        when (val typeConstructorDescriptor = type.constructor.declarationDescriptor) {
-            is ClassDescriptor ->
-                if (KotlinBuiltIns.isArrayOrPrimitiveArray(typeConstructorDescriptor))
-                    context.irBuiltIns.dataClassArrayMemberHashCodeSymbol
-                else
-                    symbolResolve(getHashCodeFunction(type))
-
-            is TypeParameterDescriptor ->
-                getHashCodeFunction(typeConstructorDescriptor.representativeUpperBound, symbolResolve)
-
-            else ->
-                throw AssertionError("Unexpected type: $type")
-        }
-
-    private fun getHashCodeFunction(
-        property: PropertyDescriptor,
-        symbolResolve: (FunctionDescriptor) -> IrSimpleFunctionSymbol
-    ): IrSimpleFunctionSymbol =
-        getHashCodeFunction(property.type, symbolResolve)
-
-    abstract fun commitSubstituted(irMemberAccessExpression: IrMemberAccessExpression<*>, descriptor: CallableDescriptor)
+    abstract fun getHashCodeFunctionInfo(type: IrType): HashCodeFunctionInfo
 
     // Entry for psi2ir
     fun generateHashCodeMethod(function: FunctionDescriptor, properties: List<PropertyDescriptor>) {
         buildMember(function) {
-            generateHashCodeMethodBody(properties)
+            generateHashCodeMethodBody(properties.map { getIrProperty(it) })
         }
     }
 
     // Entry for fir2ir
-    fun generateHashCodeMethod(irFunction: IrFunction, properties: List<PropertyDescriptor>) {
+    fun generateHashCodeMethod(irFunction: IrFunction, properties: List<IrProperty>) {
         buildMember(irFunction) {
             generateHashCodeMethodBody(properties)
         }
@@ -381,12 +353,12 @@ abstract class DataClassMembersGenerator(
     // Entry for psi2ir
     fun generateToStringMethod(function: FunctionDescriptor, properties: List<PropertyDescriptor>) {
         buildMember(function) {
-            generateToStringMethodBody(properties)
+            generateToStringMethodBody(properties.map { getIrProperty(it) })
         }
     }
 
     // Entry for fir2ir
-    fun generateToStringMethod(irFunction: IrFunction, properties: List<PropertyDescriptor>) {
+    fun generateToStringMethod(irFunction: IrFunction, properties: List<IrProperty>) {
         buildMember(irFunction) {
             generateToStringMethodBody(properties)
         }
