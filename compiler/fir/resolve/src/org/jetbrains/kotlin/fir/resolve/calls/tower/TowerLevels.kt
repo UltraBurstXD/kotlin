@@ -25,12 +25,6 @@ import org.jetbrains.kotlin.util.OperatorNameConventions
 
 abstract class TowerScopeLevel {
 
-    sealed class Token<out T : AbstractFirBasedSymbol<*>> {
-        object Properties : Token<FirVariableSymbol<*>>()
-        object Functions : Token<FirFunctionSymbol<*>>()
-        object Objects : Token<AbstractFirBasedSymbol<*>>()
-    }
-
     abstract fun processFunctionsByName(name: Name, processor: TowerScopeLevelProcessor<FirFunctionSymbol<*>>): ProcessorAction
 
     abstract fun processPropertiesByName(name: Name, processor: TowerScopeLevelProcessor<FirVariableSymbol<*>>): ProcessorAction

@@ -10,7 +10,6 @@ import org.jetbrains.kotlin.fir.FirSession
 import org.jetbrains.kotlin.fir.declarations.FirResolvedImport
 import org.jetbrains.kotlin.fir.declarations.expandedConeType
 import org.jetbrains.kotlin.fir.resolve.ScopeSession
-import org.jetbrains.kotlin.fir.resolve.calls.tower.TowerScopeLevel
 import org.jetbrains.kotlin.fir.resolve.toSymbol
 import org.jetbrains.kotlin.fir.resolve.transformers.ensureResolvedForCalls
 import org.jetbrains.kotlin.fir.scopes.FirScope
@@ -38,7 +37,10 @@ abstract class FirAbstractImportingScope(
             val firClass = (symbol as FirClassSymbol<*>).fir
 
             return if (firClass.classKind == ClassKind.OBJECT)
-                FirObjectImportedCallableScope(classId, firClass.unsubstitutedScope(session, scopeSession, withForcedTypeCalculator = false))
+                FirObjectImportedCallableScope(
+                    classId,
+                    firClass.unsubstitutedScope(session, scopeSession, withForcedTypeCalculator = false)
+                )
             else
                 firClass.scopeProvider.getStaticScope(firClass, session, scopeSession)
         }
@@ -46,60 +48,41 @@ abstract class FirAbstractImportingScope(
         return null
     }
 
-    protected fun <T : FirCallableSymbol<*>> processCallables(
+    protected fun processFunctionsByNameWithImport(
         import: FirResolvedImport,
         name: Name,
-        token: TowerScopeLevel.Token<T>,
-        processor: (FirCallableSymbol<*>) -> Unit
+        processor: (FirNamedFunctionSymbol) -> Unit
     ) {
         val callableId = CallableId(import.packageFqName, import.relativeClassName, name)
-
         val classId = import.resolvedClassId
         if (classId != null) {
-            val scope = getStaticsScope(classId) ?: return
-
-            when (token) {
-                TowerScopeLevel.Token.Functions -> scope.processFunctionsByName(
-                    callableId.callableName,
-                    processor
-                )
-                TowerScopeLevel.Token.Properties -> scope.processPropertiesByName(
-                    callableId.callableName,
-                    processor
-                )
-            }
+            getStaticsScope(classId)?.processFunctionsByName(callableId.callableName, processor)
         } else if (name.isSpecial || name.identifier.isNotEmpty()) {
             val symbols = provider.getTopLevelCallableSymbols(callableId.packageName, callableId.callableName)
-            if (symbols.isEmpty()) {
-                return
-            }
-
             for (symbol in symbols) {
+                if (symbol !is FirNamedFunctionSymbol) continue
                 symbol.ensureResolvedForCalls(session)
                 processor(symbol)
             }
         }
-
     }
 
-    abstract fun <T : FirCallableSymbol<*>> processCallables(
+    protected fun processPropertiesByNameWithImport(
+        import: FirResolvedImport,
         name: Name,
-        token: TowerScopeLevel.Token<T>,
-        processor: (FirCallableSymbol<*>) -> Unit
-    )
-
-    final override fun processFunctionsByName(name: Name, processor: (FirNamedFunctionSymbol) -> Unit) {
-        return processCallables(
-            name,
-            TowerScopeLevel.Token.Functions
-        ) { if (it is FirNamedFunctionSymbol) processor(it) }
+        processor: (FirVariableSymbol<*>) -> Unit
+    ) {
+        val callableId = CallableId(import.packageFqName, import.relativeClassName, name)
+        val classId = import.resolvedClassId
+        if (classId != null) {
+            getStaticsScope(classId)?.processPropertiesByName(callableId.callableName, processor)
+        } else if (name.isSpecial || name.identifier.isNotEmpty()) {
+            val symbols = provider.getTopLevelCallableSymbols(callableId.packageName, callableId.callableName)
+            for (symbol in symbols) {
+                if (symbol !is FirVariableSymbol) continue
+                symbol.ensureResolvedForCalls(session)
+                processor(symbol)
+            }
+        }
     }
-
-    final override fun processPropertiesByName(name: Name, processor: (FirVariableSymbol<*>) -> Unit) {
-        return processCallables(
-            name,
-            TowerScopeLevel.Token.Properties
-        ) { if (it is FirVariableSymbol<*>) processor(it) }
-    }
-
 }
