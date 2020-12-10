@@ -81,7 +81,8 @@ class MemoizedInlineClassReplacements(
                     }
 
                 // Otherwise, mangle functions with mangled parameters, ignoring constructors
-                it is IrSimpleFunction && (it.hasMangledParameters || mangleReturnTypes && it.hasMangledReturnType) ->
+                it is IrSimpleFunction && it.origin != IrDeclarationOrigin.IR_EXTERNAL_JAVA_DECLARATION_STUB &&
+                        (it.hasMangledParameters || mangleReturnTypes && it.hasMangledReturnType) ->
                     if (it.dispatchReceiverParameter != null)
                         createMethodReplacement(it)
                     else
