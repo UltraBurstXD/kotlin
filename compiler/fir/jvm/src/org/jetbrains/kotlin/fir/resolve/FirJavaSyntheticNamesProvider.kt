@@ -7,10 +7,9 @@ package org.jetbrains.kotlin.fir.resolve
 
 import org.jetbrains.kotlin.fir.NoMutableState
 import org.jetbrains.kotlin.fir.resolve.calls.FirSyntheticNamesProvider
-import org.jetbrains.kotlin.load.java.propertyNameByGetMethodName
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.util.capitalizeDecapitalize.capitalizeAsciiOnly
-import org.jetbrains.kotlin.util.capitalizeDecapitalize.capitalizeFirstWord
+import org.jetbrains.kotlin.util.capitalizeDecapitalize.toUpperCaseAsciiOnly
 
 @NoMutableState
 object FirJavaSyntheticNamesProvider : FirSyntheticNamesProvider() {
@@ -21,15 +20,36 @@ object FirJavaSyntheticNamesProvider : FirSyntheticNamesProvider() {
     override fun possibleGetterNamesByPropertyName(name: Name): List<Name> {
         if (name.isSpecial) return emptyList()
         val identifier = name.identifier
+        if (identifier.isEmpty()) return emptyList()
+        val result = ArrayList<Name>(3)
         val capitalizedAsciiName = identifier.capitalizeAsciiOnly()
-        val capitalizedFirstWordName = identifier.capitalizeFirstWord(asciiOnly = true)
-        return listOfNotNull(
-            Name.identifier(GETTER_PREFIX + capitalizedAsciiName),
-            if (capitalizedFirstWordName == capitalizedAsciiName) null else Name.identifier(GETTER_PREFIX + capitalizedFirstWordName),
-            name.takeIf { identifier.startsWith(IS_PREFIX) }
-        ).filter {
-            propertyNameByGetMethodName(it) == name
+        val standardName = Name.identifier(GETTER_PREFIX + capitalizedAsciiName)
+        val length = identifier.length
+        if (length == 1) {
+            if (identifier[0] in 'a'..'z') {
+                result += standardName
+            }
+        } else if (identifier[1] in 'a'..'z') {
+            if (identifier[0] in 'a'..'z') {
+                result += standardName
+            }
+            var secondWordStart = 2
+            while (secondWordStart < length && identifier[secondWordStart] in 'a'..'z') {
+                secondWordStart++
+            }
+            val capitalizedFirstWord =
+                identifier.substring(0, secondWordStart).toUpperCaseAsciiOnly() + identifier.substring(secondWordStart)
+            val capitalizedFirstWordName = Name.identifier(GETTER_PREFIX + capitalizedFirstWord)
+            if (secondWordStart >= length || identifier[secondWordStart] in 'A'..'Z') {
+                result += capitalizedFirstWordName
+            }
+        } else if (length < 3 || identifier[2] !in 'A'..'Z') {
+            result += standardName
         }
+        if (length > IS_PREFIX.length && identifier.startsWith(IS_PREFIX) && identifier[IS_PREFIX.length] !in 'a'..'z') {
+            result += name
+        }
+        return result
     }
 
     override fun setterNameByGetterName(name: Name): Name? {
